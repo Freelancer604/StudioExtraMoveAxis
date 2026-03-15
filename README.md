@@ -1,17 +1,49 @@
-# StudioExtraMoveAxis
-A plugin for studio in many Illusion games that adds extra move gizmo in bottom right corner. It can be turned on and off with a new button on the left edge of the screen.
+# StudioExtraMoveAxis v3.0 (Enhanced Fork)
 
-Currently supports PH, KK, AI, HS2 and KKS.
+This is a heavily expanded custom fork of the brilliant original "StudioExtraMoveAxis" plugin created by [ManlyMarco](https://github.com/ManlyMarco/StudioExtraMoveAxis). I've built upon his incredible work to incorporate several quality-of-life additions specifically geared toward making character posing more efficient and intuitive!
 
-Inspired by a feature in shortcutsKoi.
+**Original plugin:** https://github.com/ManlyMarco/StudioExtraMoveAxis
+**Fork by:** [Freelancer604](https://github.com/Freelancer604)
 
-### How to use
-1. Make sure at least [BepInEx v5.1](https://github.com/BepInEx/BepInEx), and latest [BepisPlugins](https://github.com/bbepis/BepisPlugins) and [Modding API](https://github.com/ManlyMarco/KKAPI) are installed, and your game is updated.
-2. Download the latest release for your game (KK = for Koikatsu, etc.)
-3. Extract the archive directly into your game's directory (it has a BepInEx folder, it should merge with your existing BepInEx folder).
-4. Start studio, see if there are any errors on the screen.
-5. Create a new object and click the "Extra" button in the toolbar on the left of the screen. The gizmo should appear in bottom right corner.
+---
 
-You can change how the new gizmo works in plugin settings (settings may vary per game, PH has none).
+## == Expanded Features ==
+
+- **FK Bone Cycling:** Seamlessly switch between the bones of an FK chain by scrolling your mouse wheel while hovering near the rotation gizmo.
+- **Multi-Selection Drag-and-Select:** Hold Shift while scrolling your mouse to quickly highlight and group multiple contiguous bones in a chain simultaneously.
+- **Intelligent Joint Constraints:** Specific joints (Knees, Elbows, Thumbs, and Fingers) now employ intelligent mathematical Rotation/Gimbal locks. When grabbing the center "free-orb" of the widget on a constrained joint, the plugin now seamlessly converts screen-drag distance directly into safe 1D rotation, completely bypassing the frustrating camera-angle projection limitations of standard studio tools!
+
+---
+
+## Supported Games
+
+- Honey Select 2 (HS2)
+- Koikatsu (KK)
+- Koikatsu Sunshine (KKS)
+- AI-Shoujo (AI)
+- PlayHome (PH)
+
+---
+
+## Requirements
+
+- BepInEx v5.1 or newer
+- Latest [BepisPlugins](https://github.com/IllusionMods/BepisPlugins) for your game
+- Latest [Modding API (KKAPI)](https://github.com/ManlyMarco/KKAPI) for your game
+
+---
+
+## Installation
+
+1. Download the latest release for your game from the [Releases](../../releases) page.
+2. Extract the archive into your game folder, merging with the existing `BepInEx` directory.
+3. Launch Studio. Load a character, enable FK, then click the **Extra** button in the left toolbar to activate the gizmo.
+4. You can adjust settings in the BepInEx plugin configuration menu.
 
 ![preview](https://user-images.githubusercontent.com/39247311/103706067-7ae92100-4fac-11eb-8246-76da09b1f67c.PNG)
+
+---
+
+## License
+
+GPL-3.0 — same as the original. See [LICENSE](LICENSE).
