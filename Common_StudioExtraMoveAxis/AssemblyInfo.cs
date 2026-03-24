@@ -5,11 +5,11 @@ using StudioExtraMoveAxis;
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle(StudioExtraMoveAxisPlugin.Name)]
+[assembly: AssemblyTitle("StudioExtraMoveAxis")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("https://github.com/ManlyMarco/StudioExtraMoveAxis")]
-[assembly: AssemblyProduct(StudioExtraMoveAxisPlugin.Name)]
+[assembly: AssemblyProduct("StudioExtraMoveAxis")]
 [assembly: AssemblyCopyright("Copyright ©  2021")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -32,4 +32,4 @@ using StudioExtraMoveAxis;
 // You can specify all the values or you can default the Build and Revision Numbers
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion(StudioExtraMoveAxisPlugin.Version)]
+[assembly: AssemblyVersion("2.0.0.0")]

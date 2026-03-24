@@ -399,8 +399,9 @@ namespace StudioExtraMoveAxis
                     }
                 }
 
-                // Mathematically lock the bone using flawless Quaternion projection to bypass all Gimbal lock/inversion issues entirely
-                if (!allowX || !allowY || !allowZ)
+                // Mathematically lock the bone — only during ExtraMoveAxis custom drags.
+                // Gating on _customDragActive ensures the studio's own FK panel inputs are never snapped back.
+                if ((!allowX || !allowY || !allowZ) && _customDragActive && _draggedGuideObject == g)
                 {
                     Quaternion q = Quaternion.Euler(g.changeAmount.rot);
 
