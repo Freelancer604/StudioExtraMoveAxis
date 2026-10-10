@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 #if !HS1
@@ -156,6 +156,7 @@ namespace StudioExtraMoveAxis
             "cf_j_hand_little03_r",
             // Lower body — bottom-to-top so scroll UP goes toe→foot→leg→hip
 #if HS1
+            "cf_j_toes01_r",
             "Ggmod_J_toes01_R",
 #else
             "cf_j_toes01_r",
@@ -164,6 +165,7 @@ namespace StudioExtraMoveAxis
             "cf_j_leglow01_r",
             "cf_j_legup00_r",
 #if HS1
+            "cf_j_toes01_l",
             "Ggmod_J_toes01_L",
 #else
             "cf_j_toes01_l",
@@ -333,6 +335,26 @@ namespace StudioExtraMoveAxis
 #if HS1
             if (!_hs1Initialized)
             {
+                if (Input.GetKeyDown(KeyCode.K))
+                {
+                    Logger.LogInfo("Diagnostic Key K pressed!");
+                    Logger.LogInfo("IsStudioLoaded: " + IsStudioLoaded);
+
+                    bool guideObjManagerExists = GuideObjectManager.Instance != null;
+                    Logger.LogInfo("GuideObjectManager.Instance != null: " + guideObjManagerExists);
+
+                    if (guideObjManagerExists)
+                    {
+                        try
+                        {
+                            Logger.LogInfo("GetGuideObjectOriginal() != null: " + (GetGuideObjectOriginal() != null));
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.LogError("Error calling GetGuideObjectOriginal(): " + e.Message);
+                        }
+                    }
+                }
 
                 if (IsStudioLoaded && GuideObjectManager.Instance != null && GetGuideObjectOriginal() != null)
                 {
@@ -354,7 +376,35 @@ namespace StudioExtraMoveAxis
                 SetShowGizmo(!_showGizmoValue);
                 Logger.LogInfo("Toggled Extra Move Axis Gizmo: " + _showGizmoValue);
             }
+            // K key: post-init diagnostic dump
+            if (Input.GetKeyDown(KeyCode.K))
+            {
+                Logger.LogInfo("=== POST-INIT DIAGNOSTIC (K) ===");
+                Logger.LogInfo("_gizmoRoot null=" + (_gizmoRoot == null));
+                if (_gizmoRoot != null)
+                {
+                    Logger.LogInfo("  gizmoRoot active=" + _gizmoRoot.activeSelf + " activeInHierarchy=" + _gizmoRoot.activeInHierarchy);
+                    Logger.LogInfo("  gizmoRoot worldPos=" + _gizmoRoot.transform.position + " localPos=" + _gizmoRoot.transform.localPosition);
+                    Logger.LogInfo("  gizmoRoot layer=" + _gizmoRoot.layer + " parent=" + (_gizmoRoot.transform.parent?.name ?? "null"));
+                    Logger.LogInfo("  gizmoRoot localScale=" + _gizmoRoot.transform.localScale);
+                }
+                Logger.LogInfo("_moveObj null=" + (_moveObj == null) + " active=" + (_moveObj?.activeSelf));
+                Logger.LogInfo("_rotObj null=" + (_rotObj == null) + " active=" + (_rotObj?.activeSelf));
+                Logger.LogInfo("_scaleObj null=" + (_scaleObj == null) + " active=" + (_scaleObj?.activeSelf));
+                Logger.LogInfo("ShowGizmo=" + ShowGizmo + " _lastAnySelected=" + _lastAnySelected);
+                Logger.LogInfo("_selectedObjects null=" + (_selectedObjects == null) + " count=" + (_selectedObjects?.Count ?? -1));
+                Logger.LogInfo("Camera=" + (_camera?.name ?? "null") + " cullingMask=" + (_camera?.cullingMask));
+                if (_camera != null && _gizmoRoot != null)
+                {
+                    bool sees = (_camera.cullingMask & (1 << _gizmoRoot.layer)) != 0;
+                    Logger.LogInfo("Camera sees gizmo layer " + _gizmoRoot.layer + ": " + sees);
+                    Vector3 screenPos = _camera.WorldToScreenPoint(_gizmoRoot.transform.position);
+                    Logger.LogInfo("Gizmo screen pos=" + screenPos + " (screen " + Screen.width + "x" + Screen.height + ")");
+                }
+                Logger.LogInfo("=== END DIAGNOSTIC ===");
+            }
 #endif
+            TickRotationUndo();
             if (_selectedObjects == null)
             {
                 Logger.LogWarning("_selectedObjects is null!");
@@ -411,6 +461,7 @@ namespace StudioExtraMoveAxis
 #endif
             HandleCustomDrag();
             ApplyRotationRestrictions();
+            TickRotationUndo();
         }
 
 #if !HS1
@@ -432,6 +483,8 @@ namespace StudioExtraMoveAxis
 
             if (Vector2.Distance(mousePos, gizmo2D) > (Screen.height * 0.20f)) return;
 
+            bool resetOwnsUndo = !RotationUndoActive;
+            if (resetOwnsUndo) BeginRotationUndo(2);
             foreach (var g in _selectedObjects)
             {
                 if (g == null || !g.isActive) continue;
@@ -441,7 +494,7 @@ namespace StudioExtraMoveAxis
                 if (g.transformTarget != null && IsHipsBone(g.transformTarget.name.ToLower()))
                 {
                     Quaternion qHipsOld = Quaternion.Euler(g.changeAmount.rot);
-                    g.changeAmount.rot = Vector3.zero;
+                    WriteRotation(g, Vector3.zero);
 
                     var charBones = GetFKBonesFromGuide(g);
                     if (charBones != null)
@@ -460,16 +513,17 @@ namespace StudioExtraMoveAxis
                                 // Bake the hips rotation into the child so world orientation is preserved.
                                 // Q_child_new = Q_hips_old * Q_child_old
                                 Quaternion qChildNew = qHipsOld * Quaternion.Euler(boneInfo.guideObject.changeAmount.rot);
-                                boneInfo.guideObject.changeAmount.rot = qChildNew.eulerAngles;
+                                WriteRotation(boneInfo.guideObject, qChildNew.eulerAngles);
                             }
                         }
                     }
                 }
                 else
                 {
-                    g.changeAmount.rot = Vector3.zero;
+                    WriteRotation(g, Vector3.zero);
                 }
             }
+            if (resetOwnsUndo) EndRotationUndo();
         }
 
         internal static bool _customDragActive = false;
@@ -482,7 +536,7 @@ namespace StudioExtraMoveAxis
         internal static string _draggedConstrainedAxis; // "x", "y", "z"
 
         // Reverse FK (right-click drag) state
-        private struct ReverseRotChildInfo
+        internal struct ReverseRotChildInfo
         {
             public GuideObject guideObject;
             public Quaternion changeAmountQuat;  // Quaternion.Euler(changeAmount.rot) at drag start
@@ -551,7 +605,7 @@ namespace StudioExtraMoveAxis
             // --- Start ---
             if (Input.GetMouseButtonDown(1))
             {
-                if (_rightDragActive || _customDragActive) return;
+                if (_rightDragActive || _customDragActive || _extraGizmoDragActive) return;
                 if (_gizmoRoot == null || _selectedObjects == null || _selectedObjects.Count == 0) return;
 
                 Vector3 gizmoScreenPos = _camera.WorldToScreenPoint(_gizmoRoot.transform.position);
@@ -561,12 +615,11 @@ namespace StudioExtraMoveAxis
                 var guide = _selectedObjects.FirstOrDefault(x => x.isActive);
                 if (guide == null || guide.transformTarget == null) return;
 
+                BeginRotationUndo(1);
                 _rightDragActive = true;
-                _fingerSyncChildren = null; // cancel any in-progress sync from previous drag
-                _fingerSyncIndex = 0;
                 _rightDragGuideObject = guide;
                 _rightDragStartPos = mousePos;
-                _rightDragStartRot = guide.changeAmount.rot;
+                _rightDragStartRot = ReadRotation(guide);
                 _rightDragParentWorldRot = guide.transformTarget?.parent?.rotation ?? Quaternion.identity;
                 _rightDragShiftMode = false;
                 _rightDragDirectionSet = false;
@@ -578,7 +631,7 @@ namespace StudioExtraMoveAxis
                 _rightDragAxis = null;
                 if (IsKneeBone(name)) _rightDragAxis = "x";
                 else if (IsElbowBone(name)) _rightDragAxis = "y";
-                else if (IsThumbTipBone(name)) _rightDragAxis = "y";
+                else if (IsThumbTipBone(name)) _rightDragAxis = ThumbTipAxis;
                 else if (IsFingerMidSegment(name)) _rightDragAxis = "z";
 
                 // Find FK children to counter-rotate. Two sources:
@@ -598,7 +651,7 @@ namespace StudioExtraMoveAxis
                             _rightDragChildren.Add(new ReverseRotChildInfo
                             {
                                 guideObject = bone.guideObject,
-                                changeAmountQuat = Quaternion.Euler(bone.guideObject.changeAmount.rot),
+                                changeAmountQuat = Quaternion.Euler(ReadRotation(bone.guideObject)),
                                 weight = 1.0f
                             });
                         }
@@ -617,7 +670,7 @@ namespace StudioExtraMoveAxis
                                 _rightDragChildren.Add(new ReverseRotChildInfo
                                 {
                                     guideObject = namedBone.guideObject,
-                                    changeAmountQuat = Quaternion.Euler(namedBone.guideObject.changeAmount.rot),
+                                    changeAmountQuat = Quaternion.Euler(ReadRotation(namedBone.guideObject)),
                                     weight = 1.0f
                                 });
                             }
@@ -654,15 +707,16 @@ namespace StudioExtraMoveAxis
                                 _rightDragChildren.Add(new ReverseRotChildInfo
                                 {
                                     guideObject = bone.guideObject,
-                                    changeAmountQuat = Quaternion.Euler(bone.guideObject.changeAmount.rot),
+                                    changeAmountQuat = Quaternion.Euler(ReadRotation(bone.guideObject)),
                                     weight = 0.5f,
-                                    targetQuat = Quaternion.Euler(bone.guideObject.changeAmount.rot)
+                                    targetQuat = Quaternion.Euler(ReadRotation(bone.guideObject))
                                 });
                             }
                         }
                     }
 #endif
                 }
+                foreach (var child in _rightDragChildren) TrackRotationUndo(child.guideObject);
                 return;
             }
 
@@ -682,11 +736,11 @@ namespace StudioExtraMoveAxis
                     // Non-HS1: spread sync across frames (≤4/frame) to stay under Galatea's
                     // bulk-change detection threshold (5 bones). LateUpdate continues to
                     // override finger transforms during sync so FKCtrl doesn't snap them back.
-                    _fingerSyncChildren = new List<ReverseRotChildInfo>(_rightDragChildren);
-                    _fingerSyncIndex = 0;
+                    QueueFingerSync(_rightDragChildren);
 #endif
                 }
                 if (_rightDragShiftMode) _shiftRollCooldown = true;
+                EndRotationUndo();
                 _rightDragActive = false;
                 _rightDragGuideObject = null;
                 _rightDragChildren = null;
@@ -706,7 +760,7 @@ namespace StudioExtraMoveAxis
             if (shiftNow != _rightDragShiftMode)
             {
                 _rightDragShiftMode = shiftNow;
-                _rightDragStartRot  = _rightDragGuideObject.changeAmount.rot;
+                _rightDragStartRot  = ReadRotation(_rightDragGuideObject);
                 _rightDragStartPos  = currentMousePos;
                 _rightDragParentWorldRot = _rightDragGuideObject.transformTarget?.parent?.rotation ?? Quaternion.identity;
                 _rightDragDirectionSet = false;
@@ -714,7 +768,7 @@ namespace StudioExtraMoveAxis
                     for (int i = 0; i < _rightDragChildren.Count; i++)
                     {
                         var c = _rightDragChildren[i];
-                        c.changeAmountQuat = Quaternion.Euler(c.guideObject.changeAmount.rot);
+                        c.changeAmountQuat = Quaternion.Euler(ReadRotation(c.guideObject));
                         _rightDragChildren[i] = c;
                     }
                 return; // skip this frame; next frame delta will be zero from the new anchor
@@ -765,7 +819,7 @@ namespace StudioExtraMoveAxis
             }
 
             // Apply rotation to the selected bone
-            _rightDragGuideObject.changeAmount.rot = newRot;
+            WriteRotation(_rightDragGuideObject, newRot);
 
             // Compensate each child to preserve its world rotation.
             // Formula: Qcn = Inv(Qsn) * Qs0 * Qc0  (= deltaInv * Qc0)
@@ -843,9 +897,14 @@ namespace StudioExtraMoveAxis
                         }
                         else if (IsThumbTipBone(cn))
                         {
-                            // Thumb tip: Y only, no additional clamping
+                            // Thumb tip: game-specific hinge, no additional clamping.
+#if KK
+                            num = Mathf.Sqrt(qcn.w * qcn.w + qcn.z * qcn.z);
+                            qcn = num > 0.0001f ? new Quaternion(0f, 0f, qcn.z / num, qcn.w / num) : Quaternion.identity;
+#else
                             num = Mathf.Sqrt(qcn.w * qcn.w + qcn.y * qcn.y);
                             qcn = num > 0.0001f ? new Quaternion(0f, qcn.y / num, 0f, qcn.w / num) : Quaternion.identity;
+#endif
                         }
                         else if (IsFingerMidSegment(cn))
                         {
@@ -881,12 +940,13 @@ namespace StudioExtraMoveAxis
                     // overridden in LateUpdate after FKCtrl, avoiding onChangeRot events entirely.
                     if (_rightDragIsHandBone)
                     {
+                        DropFingerSync(child.guideObject);
                         child.targetQuat = qcn;
                         _rightDragChildren[i] = child;
                     }
                     else
                     {
-                        child.guideObject.changeAmount.rot = qcn.eulerAngles;
+                        WriteRotation(child.guideObject, qcn.eulerAngles);
                     }
                 }
             }
@@ -936,11 +996,11 @@ namespace StudioExtraMoveAxis
             for (int i = _fingerSyncIndex; i < end; i++)
             {
                 var child = _fingerSyncChildren[i];
+                if (child.guideObject == null || Studio.Studio.GetChangeAmount(child.guideObject.dicKey) != child.guideObject.changeAmount) continue;
                 var ca = child.guideObject.changeAmount;
                 var saved = ca.onChangeRot;
-                ca.onChangeRot = null;
-                ca.rot = child.targetQuat.eulerAngles;
-                ca.onChangeRot = saved;
+                try { ca.onChangeRot = null; ca.rot = child.targetQuat.eulerAngles; }
+                finally { ca.onChangeRot = saved; }
             }
             _fingerSyncIndex = end;
         }
@@ -1084,7 +1144,7 @@ namespace StudioExtraMoveAxis
             // and the multi-axis rotation bug on secondary FK bones.
             Quaternion localDelta = Quaternion.Inverse(_extraGizmoShiftParentWorldRot) * worldDelta * _extraGizmoShiftParentWorldRot;
             Quaternion desiredLocalQ = localDelta * Quaternion.Euler(_extraGizmoShiftStartRot);
-            guide.changeAmount.rot = desiredLocalQ.eulerAngles;
+            WriteRotation(guide, desiredLocalQ.eulerAngles);
             if (_extraGizmoShiftDiagCount < 3)
             {
                 _extraGizmoShiftDiagCount++;
@@ -1130,7 +1190,7 @@ namespace StudioExtraMoveAxis
                     else if (_draggedConstrainedAxis == "z")
                         newRot.z += angleDelta;
 
-                    _draggedGuideObject.changeAmount.rot = newRot;
+                    WriteRotation(_draggedGuideObject, newRot);
                 }
             }
         }
@@ -1203,10 +1263,12 @@ namespace StudioExtraMoveAxis
                 {
                     allowX = false; allowZ = false;
                 }
-                // Thumbs outermost: Y only
+                // Thumbs outermost: KK uses Z; other variants retain Y.
                 else if (IsThumbTipBone(name))
                 {
-                    allowX = false; allowZ = false;
+                    allowX = false;
+                    allowY = ThumbTipAxis == "y";
+                    allowZ = ThumbTipAxis == "z";
                 }
                 // Others outermost 2: Z only
                 else if (IsFingerMidSegment(name))
@@ -1262,7 +1324,7 @@ namespace StudioExtraMoveAxis
                         q = Quaternion.Euler(currentRot);
                     }
 
-                    g.changeAmount.rot = q.eulerAngles;
+                    WriteRotation(g, q.eulerAngles);
                 }
             }
 
@@ -1916,6 +1978,13 @@ namespace StudioExtraMoveAxis
             }
         }
 
+        // Avoid a new UI assembly dependency in variants that do not reference PointerEventData.
+        private static bool IsLeftRotationPointer(object eventData)
+        {
+            // Drag-Doll ends a captured left drag with a synthetic null event.
+            return eventData == null || Convert.ToInt32(Traverse.Create(eventData).Property("button").GetValue<object>()) == 0;
+        }
+
         private static class Hooks
         {
             #region Cursor lock when dragging
@@ -1927,8 +1996,14 @@ namespace StudioExtraMoveAxis
             // Prefix fires before the original, so our flags get set regardless.
             [HarmonyPrefix]
             [HarmonyPatch(typeof(GuideBase), nameof(GuideBase.OnBeginDrag))]
-            private static bool OnBeginDragHook(GuideBase __instance/*, PointerEventData eventData*/)
+            private static bool OnBeginDragHook(GuideBase __instance, object __0)
             {
+                if (!IsLeftRotationPointer(__0) && OwnsRotationHandle(__instance)) return false;
+                if (OwnsRotationHandle(__instance))
+                {
+                    BeginRotationUndo(0, __instance);
+                    PrepareNativeRotation();
+                }
                 if (_gizmoRoot != null && __instance.transform.parent?.parent == _gizmoRoot.transform)
                 {
                     _locked = true;
@@ -1957,7 +2032,7 @@ namespace StudioExtraMoveAxis
                         // Discover if bone is constrained
                         if (IsKneeBone(name)) constrainedAxis = "x";
                         else if (IsElbowBone(name)) constrainedAxis = "y";
-                        else if (IsThumbTipBone(name)) constrainedAxis = "y";
+                        else if (IsThumbTipBone(name)) constrainedAxis = ThumbTipAxis;
                         else if (IsFingerMidSegment(name)) constrainedAxis = "z";
 
                         if (constrainedAxis != null && !_rightDragActive)
@@ -1965,7 +2040,7 @@ namespace StudioExtraMoveAxis
                             _customDragActive = true;
                             _draggedGuideObject = go;
                             _dragStartPos = new Vector2(Input.mousePosition.x, Input.mousePosition.y);
-                            _dragStartRot = go.changeAmount.rot;
+                            _dragStartRot = ReadRotation(go);
                             _dragDirectionSet = false;
                             _dragDirection = Vector2.zero;
                             _draggedConstrainedAxis = constrainedAxis;
@@ -1995,8 +2070,11 @@ namespace StudioExtraMoveAxis
             // GuideBase.OnDrag alone is insufficient because GuideRotation overrides it.
             [HarmonyPrefix]
             [HarmonyPatch(typeof(GuideRotation), nameof(GuideRotation.OnDrag))]
-            private static bool OnDragRotationHook()
+            private static bool OnDragRotationHook(GuideRotation __instance, object __0)
             {
+                if (!IsLeftRotationPointer(__0) && OwnsRotationHandle(__instance)) return false;
+                if (_rotationUndoSource == __instance && _rotationUndo == null) return false;
+                if (_rotationUndoSource == __instance && _rotationUndo != null) PrepareNativeRotation();
                 if (_extraGizmoShiftRollMode)
                 {
                     if (_extraGizmoShiftDiagCount == 0)
@@ -2015,6 +2093,72 @@ namespace StudioExtraMoveAxis
             }
 
             #endregion
+
+            [HarmonyPrefix]
+            [HarmonyPatch(typeof(GuideRotation), nameof(GuideRotation.OnInitializePotentialDrag))]
+            private static bool RotationPotentialDrag(GuideRotation __instance, object __0)
+            {
+                if (!OwnsRotationHandle(__instance)) return true;
+                if (!IsLeftRotationPointer(__0)) return false;
+                BeginRotationUndo(0, __instance);
+                PrepareNativeRotation();
+                return true;
+            }
+
+            [HarmonyPrefix]
+            [HarmonyPatch(typeof(GuideRotation), nameof(GuideRotation.OnEndDrag))]
+            private static bool RotationEndPrefix(GuideRotation __instance, object __0,
+                ref Dictionary<int, Vector3> ___dicOldRot, ref Dictionary<int, ChangeAmount> ___dicChangeAmount,
+                out bool __state)
+            {
+                __state = _rotationUndoSource == __instance;
+                if (!IsLeftRotationPointer(__0) && OwnsRotationHandle(__instance))
+                {
+                    __state = false;
+                    return false;
+                }
+                if (!__state) return true;
+                // Keep native base cleanup, but its release-time selection may differ from its snapshot.
+                ___dicChangeAmount = GuideObjectManager.Instance.selectObjectDictionary;
+                ___dicOldRot = ___dicChangeAmount.ToDictionary(p => p.Key, p => p.Value.rot);
+                _suppressNativeRotationUndo = true;
+                return true;
+            }
+
+            [HarmonyPostfix]
+            [HarmonyPatch(typeof(GuideRotation), nameof(GuideRotation.OnEndDrag))]
+            private static void RotationEndPostfix(bool __state)
+            {
+                if (!__state) return;
+                _suppressNativeRotationUndo = false;
+                _customDragActive = false;
+                _draggedGuideObject = null;
+                EndRotationUndo();
+                _rotationUndoSource = null;
+            }
+
+            [HarmonyPrefix]
+            [HarmonyPatch(typeof(UndoRedoManager), nameof(UndoRedoManager.Push))]
+            private static bool RotationPushPrefix(global::Studio.ICommand _command)
+            {
+                return !_suppressNativeRotationUndo || !(_command is GuideCommand.RotationEqualsCommand);
+            }
+
+            [HarmonyPrefix]
+            [HarmonyPatch(typeof(UndoRedoManager), nameof(UndoRedoManager.Undo))]
+            [HarmonyPatch(typeof(UndoRedoManager), nameof(UndoRedoManager.Redo))]
+            private static void RotationHistoryPrefix() { FinishRotationBeforeHistory(); }
+
+            [HarmonyPrefix]
+            [HarmonyPatch(typeof(UndoRedoManager), nameof(UndoRedoManager.Clear))]
+            private static void RotationHistoryClear()
+            {
+                _rotationUndo = null;
+                FinishRotationBeforeHistory();
+                FlushFingerSync();
+                _rotationUndoSource = null;
+                _suppressNativeRotationUndo = false;
+            }
 
             #region Attaching our gizmo to stock gizmo code
 
@@ -2061,6 +2205,12 @@ namespace StudioExtraMoveAxis
 
         private static bool IsElbowBone(string n) =>
             n.Contains("armlow01_") || n.Contains("forearm01_");
+
+#if KK
+        private const string ThumbTipAxis = "z";
+#else
+        private const string ThumbTipAxis = "y";
+#endif
 
         private static bool IsThumbTipBone(string n) =>
             n.Contains("thumb03_");  // HS2 "hand_thumb03_r", KK "thumb03_r" — both contain this
@@ -2113,12 +2263,14 @@ namespace StudioExtraMoveAxis
 
         public void OnBeginDrag(PointerEventData eventData)
         {
+            if (eventData.button != PointerEventData.InputButton.Left) return;
             var selectedObjects = StudioExtraMoveAxisPlugin.GetSelectedObjects();
             _targetGuide = selectedObjects?.FirstOrDefault(x => x.isActive);
             if (_targetGuide == null || _targetGuide.transformTarget == null) return;
 
             _startMousePos = eventData.position;
-            _startRotQ = Quaternion.Euler(_targetGuide.changeAmount.rot);
+            StudioExtraMoveAxisPlugin.BeginRotationUndo(0);
+            _startRotQ = Quaternion.Euler(StudioExtraMoveAxisPlugin.ReadRotation(_targetGuide));
             _parentWorldRot = _targetGuide.transformTarget.parent?.rotation ?? Quaternion.identity;
             _dragging = true;
             _wasInShiftRoll = false;
@@ -2134,7 +2286,26 @@ namespace StudioExtraMoveAxis
 
         public void OnDrag(PointerEventData eventData)
         {
-            if (!_dragging || _targetGuide == null) return;
+            if (!_dragging || !StudioExtraMoveAxisPlugin.RotationUndoActive) return;
+
+            // The fabricated HS1 orb outlives selection changes during a held drag.
+            // Follow the current selection and discard the previous bone's baseline.
+            var selectedGuide = StudioExtraMoveAxisPlugin.GetSelectedObjects()?.FirstOrDefault(x => x.isActive);
+            if (selectedGuide == null || selectedGuide.transformTarget == null)
+            {
+                _targetGuide = null;
+                return;
+            }
+            if (selectedGuide != _targetGuide)
+            {
+                _targetGuide = selectedGuide;
+                _startMousePos = eventData.position;
+                StudioExtraMoveAxisPlugin.TrackRotationUndo(_targetGuide);
+                _startRotQ = Quaternion.Euler(StudioExtraMoveAxisPlugin.ReadRotation(_targetGuide));
+                _parentWorldRot = _targetGuide.transformTarget.parent?.rotation ?? Quaternion.identity;
+                _wasInShiftRoll = StudioExtraMoveAxisPlugin._extraGizmoShiftRollMode;
+                return;
+            }
 
             bool inShiftRoll = StudioExtraMoveAxisPlugin._extraGizmoShiftRollMode;
 
@@ -2174,13 +2345,14 @@ namespace StudioExtraMoveAxis
 
             // Convert world-space rotation to bone-local (changeAmount) space
             Quaternion localDelta = Quaternion.Inverse(_parentWorldRot) * worldDelta * _parentWorldRot;
-            _targetGuide.changeAmount.rot = (localDelta * _startRotQ).eulerAngles;
+            StudioExtraMoveAxisPlugin.WriteRotation(_targetGuide, (localDelta * _startRotQ).eulerAngles);
         }
 
         public void OnEndDrag(PointerEventData eventData)
         {
             if (!_dragging) return;
             _dragging = false;
+            StudioExtraMoveAxisPlugin.EndRotationUndo();
 
             StudioExtraMoveAxisPlugin._extraGizmoDragActive = false;
 

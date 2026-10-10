@@ -36,3 +36,30 @@ Honey Select 2 (HS2), Koikatsu (KK), Koikatsu Sunshine (KKS), AI-Shoujo (AI), Pl
 ## License
 
 GPL-3.0, same as the original. See [LICENSE](LICENSE).
+
+## ExtraMoveAxis PLUS source update — 2026-10-10
+
+This fork contains Freelancer604's modified ExtraMoveAxis PLUS source for HS2, KK, KKS, AI-Shoujo, PlayHome and HS1. It remains licensed under GNU GPL version 3; see [LICENSE](LICENSE). Original author credits and notices are retained. The upstream project is [ManlyMarco/StudioExtraMoveAxis](https://github.com/ManlyMarco/StudioExtraMoveAxis); its v3.0 numbering is independent of this fork's 2.0 DLL identity.
+
+The October 2026 update adds one Studio undo/redo action per rotation gesture, including right-drag counterrotation of parents and children, Shift roll, constrained FK movement, middle-click reset and deferred hand/finger rotations. It also preserves Drag-Doll's existing integration contracts. Earlier HS1 scroll/toe handling and KK thumb-axis fixes are included.
+
+Use the source commit linked beside a particular binary download to identify that download's source. This fork includes the complete ExtraMoveAxis project source and build inputs; Drag-Doll's own IK movement implementation is a separate project.
+
+### Build from source
+
+On Windows, install Visual Studio Build Tools with C#/.NET desktop build tools and the .NET Framework targeting packs required by the projects (3.5 and 4.6.2), plus NuGet CLI.
+
+1. Clone this repository.
+2. Run `nuget restore StudioExtraMoveAxis.sln` from the repository root.
+3. Run `MSBuild StudioExtraMoveAxis.sln /t:Build /p:Configuration=Release /p:SkipDeploy=true` for PH, KK, AI, HS2 and KKS. Outputs are written to `bin/`.
+4. HS1 is a separate legacy IPA project. Supply its references from your own Honey Select Studio installation in `HS1_StudioExtraMoveAxis/`: `Assembly-CSharp.dll`, `Assembly-CSharp-firstpass.dll`, `IllusionPlugin.dll`, `UnityEngine.dll`, `UnityEngine.UI.dll`, `UnityEngine.UI.Translation.dll`, and the installed compatible `0Harmony.dll`. Then build `HS1_StudioExtraMoveAxis/HS1_StudioExtraMoveAxis.csproj` with the same Release options. Game assemblies are excluded from this repository.
+
+### Regression checks
+
+Run each script in a separate PowerShell 7 process:
+
+- `pwsh -NoProfile -File tests/UndoRegression.ps1`
+- `pwsh -NoProfile -File tests/HS1-ScrollRegression.ps1`
+- `pwsh -NoProfile -File tests/KK-ThumbRegression.ps1`
+
+These execute source code against small engine doubles. They cover grouped history, repeated undo/redo, deferred fingers, native release cleanup, interrupted gestures and existing scroll/thumb behavior. They do not replace live Studio testing. AI/PlayHome runtime testing requires those games; local reference-assembly builds establish API compatibility only.
