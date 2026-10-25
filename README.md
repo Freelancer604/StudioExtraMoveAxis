@@ -63,3 +63,8 @@ Run each script in a separate PowerShell 7 process:
 - `pwsh -NoProfile -File tests/KK-ThumbRegression.ps1`
 
 These execute source code against small engine doubles. They cover grouped history, repeated undo/redo, deferred fingers, native release cleanup, interrupted gestures and existing scroll/thumb behavior. They do not replace live Studio testing. AI/PlayHome runtime testing requires those games; local reference-assembly builds establish API compatibility only.
+
+
+### 2026-10-25 modification
+
+Direct dragging of an unselected knee/elbow FK marker now records one undo/redo action. Drag-Doll V3 integration contracts are preserved; no preselection requirement was added.

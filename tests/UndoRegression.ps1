@@ -21,7 +21,7 @@ for ($i = $open; $i -lt $source.Length; $i++) {
 if ($close -lt 0) { throw 'Cannot isolate production reset method' }
 $resetMethod = $source.Substring($start, $close - $start + 1)
 function Get-ProductionMethod([string] $name) {
-    $match = [regex]::Match($source, "private\s+static\s+(?:bool|void)\s+$name\s*\(")
+    $match = [regex]::Match($source, "private\s+(?:static\s+)?(?:bool|void)\s+$name\s*\(")
     if (-not $match.Success) { throw "Cannot locate production $name hook" }
     $begin = $match.Index
     $brace = $source.IndexOf('{', $begin)
@@ -35,8 +35,9 @@ function Get-ProductionMethod([string] $name) {
     }
     throw "Cannot isolate production $name hook"
 }
-$hookNames = @('RotationPotentialDrag','RotationEndPrefix','RotationEndPostfix','RotationPushPrefix','RotationHistoryPrefix','RotationHistoryClear')
+$hookNames = @('OnBeginDragHook','OnEndDragHook','ConstrainedDragEnd','RotationPotentialDrag','RotationEndPrefix','RotationEndPostfix','RotationPushPrefix','RotationHistoryPrefix','RotationHistoryClear')
 $hookMethods = ($hookNames | ForEach-Object { Get-ProductionMethod $_ }) -join "`n"
+$customDragMethod = Get-ProductionMethod 'HandleCustomDrag'
 $orbStart = $source.IndexOf('internal class CenterOrbDragHandler', [StringComparison]::Ordinal)
 if ($orbStart -lt 0) { throw 'Cannot locate production HS1 center orb handler' }
 $orbOpen = $source.IndexOf('{', $orbStart)
@@ -72,6 +73,8 @@ namespace UnityEngine {
   public float x,y;
   public Vector2(float x,float y){this.x=x;this.y=y;}
   public static float Distance(Vector2 a,Vector2 b){float x=a.x-b.x,y=a.y-b.y;return (float)Math.Sqrt(x*x+y*y);}
+  public static Vector2 zero {get{return new Vector2();}}
+  public static float Dot(Vector2 a,Vector2 b){return a.x*b.x+a.y*b.y;}
   public float magnitude {get{return (float)Math.Sqrt(x*x+y*y);}}
   public static Vector2 operator -(Vector2 a,Vector2 b){return new Vector2(a.x-b.x,a.y-b.y);}
  }
@@ -82,23 +85,25 @@ namespace UnityEngine {
   public override string ToString(){return x+","+y+","+z;}
  }
  public struct Quaternion {
-  // These cases use rotations around X only. The double preserves angle addition,
-  // wraparound, and equivalent Euler angles; it does not emulate Unity's 3D math.
-  private readonly float xAngle;
-  private Quaternion(float x){xAngle=x;}
-  public static Quaternion Euler(Vector3 v){return new Quaternion(v.x);}
-  public static Quaternion identity {get{return new Quaternion(0);}}
-  public static Quaternion AngleAxis(float angle,Vector3 axis){return new Quaternion(angle);}
-  public static Quaternion Inverse(Quaternion q){return new Quaternion(-q.xAngle);}
-  public Vector3 eulerAngles {get{float x=xAngle%360f;if(x<0)x+=360f;return new Vector3(x,0,0);}}
-  public static Quaternion operator *(Quaternion a,Quaternion b){return new Quaternion(a.xAngle+b.xAngle);}
-  public static float Angle(Quaternion a,Quaternion b){float d=Math.Abs((a.xAngle-b.xAngle)%360f);return Math.Min(d,360f-d);}
+  // Component bookkeeping for history tests; not Unity's 3D quaternion math.
+  private readonly Vector3 angles;
+  private Quaternion(Vector3 value){angles=value;}
+  public static Quaternion Euler(Vector3 v){return new Quaternion(v);}
+  public static Quaternion identity {get{return new Quaternion(Vector3.zero);}}
+  public static Quaternion AngleAxis(float angle,Vector3 axis){return Euler(new Vector3(angle,0,0));}
+  public static Quaternion Inverse(Quaternion q){return Euler(new Vector3(-q.angles.x,-q.angles.y,-q.angles.z));}
+  private static float Wrap(float a){a%=360f;return a<0?a+360f:a;}
+  public Vector3 eulerAngles {get{return new Vector3(Wrap(angles.x),Wrap(angles.y),Wrap(angles.z));}}
+  public static Quaternion operator *(Quaternion a,Quaternion b){return Euler(new Vector3(a.angles.x+b.angles.x,a.angles.y+b.angles.y,a.angles.z+b.angles.z));}
+  private static float Distance(float a,float b){float d=Math.Abs((a-b)%360f);return Math.Min(d,360f-d);}
+  public static float Angle(Quaternion a,Quaternion b){return Math.Max(Distance(a.angles.x,b.angles.x),Math.Max(Distance(a.angles.y,b.angles.y),Distance(a.angles.z,b.angles.z)));}
  }
  public static class Input {
   public static bool MiddleDown;
+  public static bool LeftHeld;
   public static Vector3 mousePosition;
   public static bool GetMouseButtonDown(int button){return button==2 && MiddleDown;}
-  public static bool GetMouseButton(int button){return false;}
+  public static bool GetMouseButton(int button){return button==0 && LeftHeld;}
  }
  public static class Screen {public static int height=1000;}
  public class Object {public static T FindObjectOfType<T>() where T:new(){return new T();}}
@@ -157,8 +162,10 @@ namespace Studio {
   public Vector3 rot {get{return value;}set{this.value=value;if(onChangeRot!=null)onChangeRot();}}
  }
  public class GuideObject {public bool isActive=true;public int dicKey;public Transform transformTarget=new Transform();public ChangeAmount changeAmount=new ChangeAmount();}
- public class GuideBase {public GuideObject guideObject;public Transform transform=new Transform();}
+ public class GuideBase {public string name="Sphere";public GuideObject guideObject;public Transform transform=new Transform();}
  public class GuideRotation : GuideBase {}
+ public class GuideSelect : GuideBase {}
+ public class GuideMove : GuideBase {}
  public class CameraControl {public bool isCursorLock;}
  public class OIBoneInfo {public GuideObject guideObject;}
  public sealed class GuideObjectManager {
@@ -189,8 +196,14 @@ namespace StudioExtraMoveAxis {
   private static bool _rightDragActive;
   internal static bool _customDragActive,_extraGizmoDragActive,_extraGizmoShiftRollMode;
   private static GuideObject _rightDragGuideObject,_draggedGuideObject;
-  private static bool IsKneeBone(string name){return false;}
-  private static bool IsElbowBone(string name){return false;}
+  private static Vector2 _dragStartPos,_dragDirection;
+  private static Vector3 _dragStartRot;
+  private static bool _dragDirectionSet;
+  private static string _draggedConstrainedAxis;
+  private const string ThumbTipAxis="y";
+  private static Vector2 ComputeOptimalDragDirection(GuideObject guide,string axis){return new Vector2(1,0);}
+  private static bool IsKneeBone(string name){return name=="cf_j_leglow01_r";}
+  private static bool IsElbowBone(string name){return name=="cf_j_armlow01_l";}
   private static bool IsThumbTipBone(string name){return false;}
   private static bool IsFingerMidSegment(string name){return false;}
   private static bool IsLeftRotationPointer(object pointer){return pointer is PointerEventData && ((PointerEventData)pointer).button==PointerEventData.InputButton.Left;}
@@ -198,7 +211,7 @@ namespace StudioExtraMoveAxis {
   public static HashSet<GuideObject> GetSelectedObjects(){return _selectedObjects;}
   private static List<OIBoneInfo> GetFKBonesFromGuide(GuideObject g){List<OIBoneInfo> bones;return BoneMap.TryGetValue(g,out bones)?bones:null;}
   public void TestMiddleClickReset(){HandleMiddleClickReset();}
-'@ + $resetMethod + "`n private static class Hooks {`n" + $hookMethods + "`n }`n }`n}`n"
+'@ + $resetMethod + "`n" + $customDragMethod + "`n private static class Hooks { private static bool _locked;`n" + $hookMethods + "`n }`n }`n}`n"
 
 $tests = @'
 namespace StudioExtraMoveAxis {
@@ -239,6 +252,7 @@ namespace StudioExtraMoveAxis {
    _fingerSyncChildren=null;_fingerSyncIndex=0;_rightDragChildren=null;_rightDragIsHandBone=false;
    _rightDragActive=false;_customDragActive=false;_extraGizmoDragActive=false;
    _rotationUndoSource=null;_suppressNativeRotationUndo=false;
+   _draggedGuideObject=null;Input.LeftHeld=false;Input.mousePosition=Vector3.zero;
   }
   private static void FlushPendingFinger(){
    if(_fingerSyncChildren==null)return;
@@ -366,6 +380,64 @@ namespace StudioExtraMoveAxis {
    return handle;
   }
   private static PointerEventData Pointer(PointerEventData.InputButton button){return new PointerEventData{button=button};}
+  private static void MarkerBegin(GuideBase handle,PointerEventData.InputButton button){Hook("OnBeginDragHook").Invoke(null,new object[]{handle,Pointer(button)});}
+  private static void MarkerEnd(GuideBase handle){
+   var hook=Hook("OnEndDragHook");
+   hook.Invoke(null,hook.GetParameters().Length==0?new object[0]:new object[]{handle,Pointer(PointerEventData.InputButton.Left)});
+   Hook("ConstrainedDragEnd").Invoke(null,new object[]{handle,Pointer(PointerEventData.InputButton.Left)});
+  }
+  public static void TestUnselectedMarker(){
+   foreach(var name in new[]{"cf_j_leglow01_r","cf_j_armlow01_l"}){
+    Fresh();var bone=TestBone(50,5);bone.isActive=false;bone.transformTarget.name=name;
+    var unrelated=TestBone(51,70);_selectedObjects.Add(unrelated);
+    var marker=new GuideSelect{guideObject=bone};Input.LeftHeld=true;
+    MarkerBegin(marker,PointerEventData.InputButton.Left);
+    Check(_customDragActive,"direct marker did not start the constrained drag");
+    Input.mousePosition=new Vector3(20,0,0);new StudioExtraMoveAxisPlugin().HandleCustomDrag();
+    var final=bone.changeAmount.rot;
+    Check(final.x!=5 || final.y!=0,"direct marker did not actually rotate the joint");
+    Input.LeftHeld=false;MarkerEnd(marker);
+    Check(Studio.Studio.Instance.commandController.Commands.Count==1,"unselected marker drag created no undo entry");
+    Check(!_customDragActive && _rotationUndo==null,"marker release left the constrained writer active");
+    Studio.Studio.Instance.commandController.Undo();
+    Check(bone.changeAmount.rot.x==5 && bone.changeAmount.rot.y==0,"marker undo did not restore its starting rotation");
+    Studio.Studio.Instance.commandController.Redo();
+    Check(bone.changeAmount.rot.x==final.x && bone.changeAmount.rot.y==final.y,"marker redo did not restore its final rotation");
+    Check(unrelated.changeAmount.rot.x==70 && _selectedObjects.SetEquals(new[]{unrelated}),"marker history modified the unrelated selection");
+   }
+  }
+  public static void TestMarkerNoOpAndOtherButtons(){
+   Fresh();var bone=TestBone(52,5);bone.transformTarget.name="cf_j_leglow01_r";
+   var marker=new GuideSelect{guideObject=bone};Input.LeftHeld=true;
+   MarkerBegin(marker,PointerEventData.InputButton.Left);Input.LeftHeld=false;MarkerEnd(marker);
+   Check(Studio.Studio.Instance.commandController.Commands.Count==0,"unmoved marker created history");
+   Check(!_customDragActive && _rotationUndo==null,"unmoved marker left an active writer");
+   foreach(var button in new[]{PointerEventData.InputButton.Right,PointerEventData.InputButton.Middle}){
+    Fresh();MarkerBegin(marker,button);
+    Check(!_customDragActive && _rotationUndo==null,"non-left marker pointer started a left rotation");
+   }
+   Fresh();MarkerBegin(new GuideMove{name="x",guideObject=bone},PointerEventData.InputButton.Left);
+   Check(!_customDragActive && _rotationUndo==null,"translation arrow was claimed as a rotation");
+  }
+  public static void TestMarkerHistoryAndLostRelease(){
+   Fresh();var bone=TestBone(53,5);bone.transformTarget.name="cf_j_leglow01_r";
+   var marker=new GuideSelect{guideObject=bone};Input.LeftHeld=true;
+   MarkerBegin(marker,PointerEventData.InputButton.Left);
+   Input.mousePosition=new Vector3(20,0,0);new StudioExtraMoveAxisPlugin().HandleCustomDrag();
+   HistoryPrefix();Studio.Studio.Instance.commandController.Undo();
+   Input.mousePosition=new Vector3(40,0,0);new StudioExtraMoveAxisPlugin().HandleCustomDrag();
+   Check(bone.changeAmount.rot.x==5,"held marker overwrote Undo");
+   MarkerEnd(marker);Check(Studio.Studio.Instance.commandController.Commands.Count==1,"late marker release duplicated history");
+   Fresh();bone=TestBone(54,5);bone.transformTarget.name="cf_j_leglow01_r";marker=new GuideSelect{guideObject=bone};Input.LeftHeld=true;
+   MarkerBegin(marker,PointerEventData.InputButton.Left);
+   Input.mousePosition=new Vector3(20,0,0);new StudioExtraMoveAxisPlugin().HandleCustomDrag();
+   Input.LeftHeld=false;TickRotationUndo();
+   Check(Studio.Studio.Instance.commandController.Commands.Count==1 && !_customDragActive,"lost marker release did not finish history");
+  }
+  public static void TestDragDollCursorContract(){
+   Check(Hook("OnEndDragHook").GetParameters().Length==0,"DragDoll V3 requires the zero-argument cursor release hook");
+   Hook("OnEndDragHook").Invoke(null,null);
+  }
   private sealed class ProbeCommand : ICommand {public void Do(){}public void Undo(){}public void Redo(){}}
   public static void TestPointerOwnership(){
    Fresh();var bone=TestBone(31,5);_selectedObjects.Add(bone);var handle=OwnedHandle(bone);
@@ -398,6 +470,8 @@ namespace StudioExtraMoveAxis {
      "native release retained stale pre-scroll rotation dictionary");
    Check(!MayPush(new GuideCommand.RotationEqualsCommand(new GuideCommand.EqualsInfo[0])),"duplicate native rotation command was not suppressed");
    Check(MayPush(new ProbeCommand()),"unrelated command was suppressed with native rotation");
+   MarkerEnd(handle); // GuideRotation.OnEndDrag calls its GuideBase cleanup first.
+   Check(_rotationUndo!=null && _suppressNativeRotationUndo,"base release prematurely completed native rotation history");
    EndPostfix(end.Owned);
    Check(Studio.Studio.Instance.commandController.Commands.Count==1,"scroll retarget added duplicate or missing history");
    Check(MayPush(new GuideCommand.RotationEqualsCommand(new GuideCommand.EqualsInfo[0])),"native rotation suppression leaked past release");
@@ -495,6 +569,10 @@ if ($helperPresent) {
  $cases['history interruption preserves hand target'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestHistoryInterruptHand() }
  $cases['history clear flushes pending fingers'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestClearFlushesPendingFingers() }
  $cases['inactive selected secondary'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestInactiveSelectedSecondary() }
+ $cases['unselected knee and elbow marker undo redo'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestUnselectedMarker() }
+ $cases['marker no-op and pointer ownership'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestMarkerNoOpAndOtherButtons() }
+ $cases['marker history interruption and lost release'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestMarkerHistoryAndLostRelease() }
+ $cases['DragDoll V3 cursor release contract'] = { [StudioExtraMoveAxis.StudioExtraMoveAxisPlugin]::TestDragDollCursorContract() }
 }
 $failures = @()
 foreach ($case in $cases.GetEnumerator()) {
